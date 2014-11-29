@@ -1,80 +1,60 @@
-#include <iostream>
-#include <vector>
 #include <limits>
-#include <algorithm>
+#include <vector>
+#include <iomanip>
 #include <sstream>
+#include <iostream>
+#include <algorithm>
+
+#include <boost/random/mersenne_twister.hpp>
+#include <boost/random/uniform_int_distribution.hpp>
+
+#include <csignal>
 
 using namespace std;
+using namespace boost::random;
 
 const int G = -1;
 const int E = -2;
 
+bool stop_flag = false;
+
+void sigint_handler(int) { stop_flag = true; }
+
 class Stripe {
  public:
-  struct Node {
-    Node(int v, Node* n) : value(v), next(n) {}
-
-    void fillVector(vector<int>& result) {
-      Node* node = this;
-      int i = 0;
-      while (node != NULL) {
-        result[i] = node->value;
-        node = node->next;
-        i++;
-      }
-    }
-
-    int value;
-    Node* next;
-  };
-
-  Stripe(int groups_count, int group_len) : justConstructed_(true) {
-    afteri_ = new Node(E, NULL);
-    head_ = i_ = new Node(G, afteri_);
+  Stripe(int groups_count, int group_len, int disks_count) {
+    v_.push_back(E);
+    v_.push_back(G);
     for (int group = 1; group <= groups_count; group++) {
       for (int i = 0; i < group_len; i++) {
-        head_ = new Node(group, head_);
+        v_.push_back(group);
       }
+    }
+
+    realSize_ = v_.size();
+    distribution_ = uniform_int_distribution<>(0, realSize_ - 1);
+    v_.resize(disks_count);
+  }
+
+  void next() {
+    for (size_t i = 0; i < realSize_; i++) {
+      swap(v_[i], v_[distribution_(generator_)]);
     }
   }
 
-  bool next(vector<int>& result) {
-    if (justConstructed_) {
-      justConstructed_ = false;
-      head_->fillVector(result);
-      return true;
-    } else if (afteri_->next != NULL || afteri_->value < head_->value) {
-      Node* beforek;
-      Node* k;
-      if (afteri_->next != NULL && i_->value >= afteri_->next->value) {
-        beforek = afteri_;
-      } else {
-        beforek = i_;
-      }
-      k = beforek->next;
-      beforek->next = k->next;
-      k->next = head_;
-      if (k->value < head_->value) {
-        i_ = k;
-      }
-      afteri_ = i_->next;
-      head_ = k;
-      head_->fillVector(result);
-      return true;
-    } else {
-      return false;
-    }
-  }
+  int operator[](size_t index) const { return v_[index]; }
+
+  vector<int> v() const { return v_; }
 
  private:
-  bool justConstructed_;
-  Node* head_;
-  Node* i_;
-  Node* afteri_;
+  size_t realSize_;
+  vector<int> v_;
+  mt19937_64 generator_;
+  uniform_int_distribution<> distribution_;
 };
 
 struct Result {
-  int max;
+  int maxMinDiff;
   vector<vector<int> > sums;
   vector<vector<int> > stripes;
 };
@@ -101,31 +81,39 @@ template <int disks_count, int groups_count, int group_len>
 Result bruteforce() {
   Result result;
   const size_t stripe_len = groups_count * group_len + 2;
-  result.max = stripe_len;
+  result.maxMinDiff = disks_count;
+
+  if (stripe_len > disks_count) {
+    cerr << "Error: stripe is shorter than disks count" << endl;
+    exit(1);
+  }
 
   const size_t total_items = disks_count * stripe_len;
-  vector<int> table(total_items);
   vector<int> sum(disks_count);
 
-  Stripe stripe(groups_count, group_len);
-  vector<int> stripe_v(disks_count);
+  Stripe stripe(groups_count, group_len, disks_count);
   unsigned long long stripe_counter = 0;
 
   unsigned long long possible_stripes =
       calc_possible_stripes(stripe_len, groups_count, group_len);
 
-  while (stripe.next(stripe_v)) {
-    if (stripe_counter % (1 * 1000 * 1000) == 0) {
-      cerr << '\r' << 100.0 * stripe_counter / possible_stripes << "%\t\t";
+  cerr << "Possible stripes: " << possible_stripes << endl;
+
+  do {
+    if (stripe_counter % (50 * 1000 * 1000 / stripe_len / disks_count) == 0) {
+      cerr << '\r' << "Diff: " << setw(3) << result.maxMinDiff
+           << "  Good stripes: " << setw(15) << result.stripes.size()
+           << "  Stripes: " << setw(15) << stripe_counter;
     }
+
     size_t pos = 0;
     fill(sum.begin(), sum.end(), 0);
     while (pos < total_items) {
       size_t failed_index =
           disks_count - ((pos - 1 + disks_count) % disks_count + 1);
-      int failed = stripe_v[failed_index];
+      int failed = stripe[failed_index];
       for (size_t i = 0; i < stripe_len; i++) {
-        int source = stripe_v[i];
+        int source = stripe[i];
         sum[(pos + i) % disks_count] +=
             (i != failed_index) &&
             ((failed > 0 && source == failed) || (failed == G && source != E));
@@ -133,29 +121,39 @@ Result bruteforce() {
       pos += stripe_len;
     }
 
-    int new_max = *max_element(sum.begin(), sum.end());
-    if (result.max > new_max) {
-      result.max = new_max;
+    int new_min = sum[1];
+    int new_max = sum[1];
+    for (size_t i = 1; i < sum.size(); i++) {
+      new_min = min(new_min, sum[i]);
+      new_max = max(new_max, sum[i]);
+    }
+    int new_max_min_diff = new_max - new_min;
+    if (new_max_min_diff < result.maxMinDiff) {
+      result.maxMinDiff = new_max_min_diff;
       result.sums.clear();
       result.stripes.clear();
       result.sums.push_back(sum);
-      result.stripes.push_back(stripe_v);
-    } else if (result.max == new_max) {
+      result.stripes.push_back(stripe.v());
+    } else if (result.maxMinDiff == new_max_min_diff) {
       result.sums.push_back(sum);
-      result.stripes.push_back(stripe_v);
+      result.stripes.push_back(stripe.v());
     }
 
     stripe_counter++;
-  }
+    stripe.next();
+  } while (!(result.maxMinDiff <= 2 && result.stripes.size() == 20) &&
+           !stop_flag);
 
-  cerr << "\r100%\t\t" << endl;
-
+  cerr << '\r' << "Diff: " << setw(3) << result.maxMinDiff
+       << "  Good stripes: " << setw(15) << result.stripes.size()
+       << "  Stripes: " << setw(15) << stripe_counter << endl;
   return result;
 }
 
 string stripe2string(vector<int> stripe) {
   ostringstream oss;
   for (size_t i = 0; i < stripe.size() && stripe[i] != 0; i++) {
+    oss << setw(3);
     switch (stripe[i]) {
       case G:
         oss << 'G';
@@ -171,8 +169,10 @@ string stripe2string(vector<int> stripe) {
 }
 
 int main() {
-  Result result = bruteforce<15, 3, 4>();
-  cout << result.sums.size() << " with max=" << result.max << endl;
+  signal(SIGINT, sigint_handler);
+
+  Result result = bruteforce<30, 3, 9>();
+  cout << result.sums.size() << " with diff=" << result.maxMinDiff << endl;
   int sums_counter = 0;
   for (size_t i = 0; i < result.sums.size(); i++) {
     for (size_t j = 0; j < result.sums[i].size(); j++) {
@@ -182,7 +182,7 @@ int main() {
     cout << endl;
 
     sums_counter++;
-    if (sums_counter == 100) {
+    if (sums_counter > 30) {
       break;
     }
   }
