@@ -10,6 +10,11 @@
 
 #include <csignal>
 
+#include <omp.h>
+#include <stdio.h>
+#define DEFAULT_STRIPES_IN_RESULTS 5
+#define DEFAULT_PRINT_STRIPES 20
+
 using namespace std;
 using namespace boost::random;
 
@@ -20,9 +25,23 @@ bool stop_flag = false;
 
 void sigint_handler(int) { stop_flag = true; }
 
+unsigned long long __rdtsc()
+{
+	unsigned long lo, hi;
+		/**
+		 * __asm__ __volatile__ (      // serialize
+		 * "xorl %%eax,%%eax \n        cpuid"
+		 * ::: "%rax", "%rbx", "%rcx", "%rdx");
+		**/
+		/* We cannot use "=A", since this would use %rax on x86_64 */
+	__asm__ __volatile__ ("rdtsc" : "=a" (lo), "=d" (hi));
+	return (unsigned long long)hi << 32 | lo;
+}
+
 class Stripe {
  public:
-  Stripe(int groups_count, int group_len, int disks_count) {
+  Stripe(int groups_count, int group_len, int disks_count, int seed)
+    : generator_(seed) {
     v_.push_back(E);
     v_.push_back(G);
     for (int group = 1; group <= groups_count; group++) {
@@ -78,26 +97,19 @@ unsigned long long calc_possible_stripes(unsigned long long stripe_len,
 }
 
 template <int disks_count, int groups_count, int group_len>
-Result bruteforce() {
+Result bruteforce(size_t stripes_in_result) {
   Result result;
   const size_t stripe_len = groups_count * group_len + 2;
   result.maxMinDiff = disks_count;
 
-  if (stripe_len > disks_count) {
-    cerr << "Error: stripe is shorter than disks count" << endl;
-    exit(1);
-  }
 
   const size_t total_items = disks_count * stripe_len;
   vector<int> sum(disks_count);
 
-  Stripe stripe(groups_count, group_len, disks_count);
+  unsigned long long ts;
+  ts = __rdtsc();
+  Stripe stripe(groups_count, group_len, disks_count, ts);
   unsigned long long stripe_counter = 0;
-
-  unsigned long long possible_stripes =
-      calc_possible_stripes(stripe_len, groups_count, group_len);
-
-  cerr << "Possible stripes: " << possible_stripes << endl;
 
   do {
     if (stripe_counter % (50 * 1000 * 1000 / stripe_len / disks_count) == 0) {
@@ -141,15 +153,30 @@ Result bruteforce() {
 
     stripe_counter++;
     stripe.next();
-  } while (!(result.maxMinDiff <= 2 && result.stripes.size() == 20) &&
+  } while (!(result.maxMinDiff <= 2 && result.stripes.size() == stripes_in_result) &&
            !stop_flag);
 
   cerr << '\r' << "Diff: " << setw(3) << result.maxMinDiff
        << "  Good stripes: " << setw(15) << result.stripes.size()
        << "  Stripes: " << setw(15) << stripe_counter << endl;
+
   return result;
 }
 
+int CheckStripeLen(size_t disks_count, size_t groups_count, size_t group_len)
+{
+	const size_t stripe_len = groups_count * group_len + 2;
+	if (stripe_len > disks_count)
+	{
+		cerr << "Error: stripe is shorter than disks count" << endl;
+	    exit(1);
+	}
+	unsigned long long possible_stripes =
+	      calc_possible_stripes(stripe_len, groups_count, group_len);
+
+	cerr << "Possible stripes: " << possible_stripes << endl;
+	return 0;
+}
 string stripe2string(vector<int> stripe) {
   ostringstream oss;
   for (size_t i = 0; i < stripe.size() && stripe[i] != 0; i++) {
@@ -168,22 +195,72 @@ string stripe2string(vector<int> stripe) {
   return oss.str();
 }
 
-int main() {
+int printResults(Result *result_list, int list_len)
+{
+	int i;
+	Result result;
+	for(i = 0; i < list_len; i++)
+	{
+	  result = result_list[i];
+	  cout << result.sums.size() << " with diff=" << result.maxMinDiff << endl;
+	  int sums_counter = 0;
+	  for (size_t i = 0; i < result.sums.size(); i++) {
+	    for (size_t j = 0; j < result.sums[i].size(); j++) {
+	      cout << result.sums[i][j] << ' ';
+	    }
+	    cout << '\t' << stripe2string(result.stripes[i]);
+	    cout << endl;
+
+	    sums_counter++;
+	    if (sums_counter > DEFAULT_PRINT_STRIPES) {
+	      break;
+	    }
+	  }
+	}
+	return 0;
+}
+
+#define disks_count 30
+#define groups_count 3
+#define group_len 9
+
+int main(int argc, char *argv[])
+{
   signal(SIGINT, sigint_handler);
+  int thread_num, i;
+  size_t stripes_in_result;
 
-  Result result = bruteforce<30, 3, 9>();
-  cout << result.sums.size() << " with diff=" << result.maxMinDiff << endl;
-  int sums_counter = 0;
-  for (size_t i = 0; i < result.sums.size(); i++) {
-    for (size_t j = 0; j < result.sums[i].size(); j++) {
-      cout << result.sums[i][j] << ' ';
-    }
-    cout << '\t' << stripe2string(result.stripes[i]);
-    cout << endl;
+  CheckStripeLen(disks_count, groups_count, group_len);
 
-    sums_counter++;
-    if (sums_counter > 30) {
-      break;
-    }
+  if(argc == 3)
+  {
+	  thread_num = atoi(argv[1]);
+	  stripes_in_result = atoi(argv[2]);
   }
+  else
+  {
+	  thread_num = omp_get_max_threads();
+	  stripes_in_result = DEFAULT_STRIPES_IN_RESULTS;
+  }
+  printf("thread_num = %d, stripes_in_result = %lu\n", thread_num, stripes_in_result);
+  omp_set_num_threads(thread_num);
+
+  Result *result_list;
+  posix_memalign((void **)&result_list, 16, sizeof(Result) * thread_num);
+
+#pragma omp parallel
+  {
+	  Result result;
+#pragma omp for
+	  for(i = 0; i < thread_num; i++)
+	  {
+		  result_list[i] = bruteforce<disks_count, groups_count, group_len>(stripes_in_result);
+	  }
+
+  }
+
+  printResults(result_list, thread_num);
+
+  free(result_list);
+  return 0;
 }
