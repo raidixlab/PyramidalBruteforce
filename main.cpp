@@ -195,13 +195,13 @@ string stripe2string(vector<int> stripe) {
   return oss.str();
 }
 
-int printResults(Result *result_list, int list_len)
+int printResults(vector<Result> results, int list_len)
 {
 	int i;
 	Result result;
 	for(i = 0; i < list_len; i++)
 	{
-	  result = result_list[i];
+    result = results[i];
 	  cout << result.sums.size() << " with diff=" << result.maxMinDiff << endl;
 	  int sums_counter = 0;
 	  for (size_t i = 0; i < result.sums.size(); i++) {
@@ -245,8 +245,7 @@ int main(int argc, char *argv[])
   printf("thread_num = %d, stripes_in_result = %lu\n", thread_num, stripes_in_result);
   omp_set_num_threads(thread_num);
 
-  Result *result_list;
-  posix_memalign((void **)&result_list, 16, sizeof(Result) * thread_num);
+  vector<Result> results(thread_num);
 
 #pragma omp parallel
   {
@@ -254,13 +253,12 @@ int main(int argc, char *argv[])
 #pragma omp for
 	  for(i = 0; i < thread_num; i++)
 	  {
-		  result_list[i] = bruteforce<disks_count, groups_count, group_len>(stripes_in_result);
+      results[i] = bruteforce<disks_count, groups_count, group_len>(stripes_in_result);
 	  }
 
   }
 
-  printResults(result_list, thread_num);
+  printResults(results, thread_num);
 
-  free(result_list);
   return 0;
 }
