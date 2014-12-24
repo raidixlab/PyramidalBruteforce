@@ -224,7 +224,7 @@ Result bruteforce(size_t stripes_in_result) {
     stripe_counter++;
     stripe.next();
   } while (
-      !(result.maxMinDiff <= 0 && result.stripes.size() == stripes_in_result) &&
+      !(result.maxMinDiff <= 1 && result.stripes.size() == stripes_in_result) &&
       !stop_flag);
 
   cerr << '\r' << "Diff: " << setw(3) << result.maxMinDiff
