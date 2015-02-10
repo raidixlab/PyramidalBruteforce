@@ -63,19 +63,23 @@ class Stripe {
     v_.push_back(E);
     v_.push_back(G);
     for (int group = 1; group <= groups_count; group++) {
-      for (int i = 0; i < group_len; i++) {
+      for (int i = 0; i < group_len; ++i) {
         v_.push_back(group);
       }
     }
 
     realSize_ = v_.size();
-    distribution_ = uniform_int_distribution<>(0, realSize_ - 1);
+
+    distributions_.resize(realSize_);
+    for (size_t i = 1; i < distributions_.size(); ++i) {
+      distributions_[i] = uniform_int_distribution<>(0, i);
+    }
     v_.resize(disks_count);
   }
 
   void next() {
-    for (size_t i = 0; i < realSize_; i++) {
-      swap(v_[i], v_[distribution_(generator_)]);
+    for (size_t i = realSize_ - 1; i >= 1; --i) {
+      swap(v_[i], v_[distributions_[i](generator_)]);
     }
   }
 
@@ -87,7 +91,7 @@ class Stripe {
   size_t realSize_;
   vector<int> v_;
   mt19937_64 generator_;
-  uniform_int_distribution<> distribution_;
+  vector< uniform_int_distribution<> > distributions_;
 };
 
 struct Result {
