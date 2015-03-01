@@ -62,6 +62,7 @@ class Stripe {
       : generator_(seed) {
     v_.push_back(E);
     v_.push_back(G);
+    v_.push_back(G);
     for (int group = 1; group <= groups_count; group++) {
       for (int i = 0; i < group_len; ++i) {
         v_.push_back(group);
@@ -131,7 +132,8 @@ void calc_sum(const Stripe& stripe, vector<int>& sum) {
       int source = stripe[i];
       sum[(pos + i) % disks_count] +=
           (i != failed_index) &&
-          ((failed > 0 && source == failed) || (failed == G && source != E));
+          ((failed > 0 && source == failed) ||
+           (failed == G && source != E && source != G));
     }
     pos += stripe_len;
   }
@@ -144,12 +146,14 @@ size_t index_in_stripe(size_t index_in_sum, size_t first_index_in_stripe) {
 
 template <int disks_count, int groups_count, int group_len>
 void place_local_parities(const Stripe& stripe, vector<int>& group_maxes,
-                          vector<size_t>& local_parity_indices, size_t& G_index,
+                          vector<size_t>& local_parity_indices,
+                          size_t& G1_index, size_t& G2_index,
                           vector<int>& sum) {
-  G_index = 0;
-  for (size_t i = 0; i < disks_count && stripe[G_index] != G; i++) {
-    G_index = i;
-  }
+  for (G1_index = 0; G1_index < disks_count && stripe[G1_index] != G;
+       G1_index++);
+  for (G2_index = G1_index + 1; G2_index < disks_count && stripe[G2_index] != G;
+       G2_index++);
+
   fill(group_maxes.begin(), group_maxes.end(), 0);
   for (size_t i = 1; i < disks_count; i++) {
     size_t sum_index = i;
@@ -209,7 +213,7 @@ Result bruteforce(size_t stripes_in_result) {
 
   vector<int> group_maxes(groups_count);
   vector<size_t> local_parity_indices(groups_count);
-  size_t G_index;
+  size_t G1_index, G2_index;
 
   do {
     if (stripe_counter % (50 * 1000 * 1000 / stripe_len / disks_count) == 0) {
@@ -220,7 +224,7 @@ Result bruteforce(size_t stripes_in_result) {
     calc_sum<disks_count, groups_count, group_len, stripe_len>(stripe, sum);
 
     place_local_parities<disks_count, groups_count, group_len>(
-        stripe, group_maxes, local_parity_indices, G_index, sum);
+        stripe, group_maxes, local_parity_indices, G1_index, G2_index, sum);
 
     update_result<groups_count, disks_count>(
         stripe, sum, local_parity_indices, G_index, result);
