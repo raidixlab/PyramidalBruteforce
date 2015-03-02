@@ -1,0 +1,9 @@
+1. To build program
+	$make all
+
+2. To clean
+	$make clean
+
+3. To run 
+	$./main [num_threads, results_per_thread]
+If program gets 0 arguments it starts with the max number of threads and default values of results per thread. 
